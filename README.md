@@ -1,39 +1,73 @@
-# Train.py 
-## Arguments
-- **nepochs** 
-Number of the max nepochs.
-- **batch** 
-Size of one batch. Default =128
-- **gpu**
-Default = 0
-- **lr**
-Learning Rate. Default = 0.0001
-- **pretrain**
-Train a new model (False) or continue training (True).
-- **model**
-Models to train. Used Model: res, inc, IncResV2, dense ...
-- **mode** 
-normal, noise, adv...
-- **noise** 
-If training in noise mode, it's the size of noise perturbation.
+# 前言
 
-  noise: 25, 15 ....
-  
-  l_2 score: 34.99, 21.45 ...
+深度神经网络在许多领域已经取得了出色的成果。然而许多研究都证明，深度神经网络对一些设计好的扰动表现十分敏感，这种被有意细微扰动过的样本就称为对抗样本，它和原样本的区别几乎不能为人所察觉，却能够轻易地使未经防御的神经网络判断出错。这个重要问题阻碍了深度神经网络在实际场景中的应用，尤其是一些安全性要求非常高的场景，例如，自动驾驶等。
 
-# ImageLoad.py
+## 对抗攻击
 
+对抗攻击就是生成对抗样本，攻击者向原始图片中加入一些经过设计的扰动，这些扰动不会引起人类识别上的错误，却可以轻易地使未经防御的模型识别发生错误。在现有的针对攻击的研究中，会根据某些特点对攻击进行分类，主要是分为黑盒攻击和白盒攻击。
+
+### 黑盒攻击
+
+顾名思义，整个模型对于攻击者来说是不可见的，攻击者无法获取攻击模型的任何信息，包括模型结构、模型参数等。存在一些攻击是基于模型反馈的输出展开的，例如，ZOO攻击是基于目标模型输出的logit vector；但是在更普遍更实际的情况下，攻击者不可能获得目标模型的输出的具体细节，只有分类的最终结果而已。
+
+我们考虑后者的情况，在这样的情况下，一般的攻击方法是使用替代模型进行攻击，即在可能的情况下，使用相同或者相似的训练数据，训练一个和攻击目标具有相同任务的模型，针对替代模型进行白盒攻击，这样产生的对抗样本在一定程度上也可是欺骗攻击目标。这种现象被称为对抗样本的传递性(transferability)，即从某些模型中生成的对抗样本，对其他相同任务的模型也有一定的攻击性，这是由于相同任务的模型可能学习到训练数据集中某些相似的特征，从而被欺骗。也就是说想要进行黑盒攻击，就要对白盒攻击有一定的了解，接下来，我们介绍白盒攻击。
+
+### 白盒攻击
+
+白盒攻击即攻击者拥有攻击目标的全部信息，包括模型的网络结构和参数。这种情况下，攻击者可以针对目标模型进行攻击，一般来说白盒攻击的成功率要明显高于黑盒攻击。这是因为，知道了模型信息，可以针对性地调整图片的扰动，从而使结果尽可能朝着错误方向偏移。接下来我们将简单介绍通常的攻击原理以及几种有代表性的算法。
+
+# 天池对抗算法大赛
+
+
+天池对抗算法大赛使阿里举办的关于对抗攻击和防御算法的大赛，大赛提供了8万余张来自110个类别的实际场景中的图片，需要参赛者在这个数据集上训练一个识别模型。模型分为三个赛道，无目标攻击、有目标攻击以及防御赛道。其中攻击赛带需要参赛者生成对抗样本去攻击五个评测防御模型，注意这里我们无法得到关于评测模型的任何信息；而防御赛道需要训练一个强健或者说经过防御的识别模型，从而能够正确识别各种对抗样本。
+
+# 数据集
+
+## 数据来源
+数据集包含了8w多张属于110类的来自淘宝实际场景中的图片，压缩在四个zip包中IJCAI_2019_AAAC_train_part_1~4.zip，解压后即可。[数据下载页](https://tianchi.aliyun.com/competition/entrance/231701/information)
+
+## 数据预处理
+
+- 首先创建用于描述数据集的csv文件,分为train.csv和test.csv两个文件，csv中数据分为三列
+
+filename | label | target 
+--|:--:|--:
+00000/file | 5 |0
+
+注意在训练的过程中target项是无用的，仅仅是为了和之后有目标攻击时统一数据集输入。
+
+- 本代码使用pytorch中的dataset类构建输入数据集，在ImageLoad.py文件中使用 TianchiDataset 类进行数据集构建
 
 ```
-from ImageLoad import TianchiDataset, RandomCrop, Rescale
-
-if args.model == 'res':
-    from ImageLoad import ToTensorRescale as ToTensor
-else:
-    from ImageLoad import ToTensor
+train_data = TianchiDataset("./train.csv",
+                          "../IJCAI_2019_AAAC_train",
+                          transform=transforms.Compose([Rescale(400), RandomCrop(299), ToTensor()]))
 ```
-Please note that ResNet is trained with images regularize to [0, 1/255], and others are trained with those regularize to [0,1]. By the way, output of inception V3 should be ``` model(x)[0]```
-Because the model(x) is a tuple of 2 elements.
 
-# clean.py
-To clean the dataset, including exif error, dimension error 
+- 由于数据中存在一些损坏的图片，无法正常读取，可以通过运行clean.py文件来清洗数据集，得到损坏图片的文件名之后从csv文件中去除
+
+
+# 训练过程
+
+通过运行train.py文件开始训练过程，例如，运行如下指令开始ResNet的正常训练。
+```
+python train.py --model res --mode normal
+```
+
+- **nepochs, batch, lr** 模型训练的超参数 分别是 epochs, batch_size, learning rate
+- **model** 选择训练的模型类型 "res", "dense", "incres", "incv4"
+- **mode**  选择正常训练还是对抗训练 "normal", "adv"
+
+如果要开始进行对抗训练生成防御模型的话，可以参考以下指令：
+```
+python train.py --model res --mode adv --epsilon 35 --noise 10 
+```
+- **epsilon** 扰动图像的大小上届
+- **noise**   进行攻击之前加入的随机噪声
+
+# 攻击过程
+
+可以直接运行sh脚本开始对抗攻击生成对抗样本，以adv_gen.sh为例:
+```
+python adv_gen.py --model ens_2 --attack test --epsilon 40 --output "./output"
+```
